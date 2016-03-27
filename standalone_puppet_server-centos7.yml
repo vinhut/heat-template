@@ -1,0 +1,90 @@
+heat_template_version: 2013-05-23
+
+description: >
+  This is an Standalone environment for Puppet server.
+parameters:
+  key_name:
+    type: string
+    label: key_name
+    description: Name of key-pair to be used for compute instance
+    default: openstack-root
+  image_id:
+    type: string
+    label: image_id
+    description: Name of the image to use for compute instance
+    default: centos7
+  instance_type:
+    type: string
+    label: instance_type
+    description: Type of instance (flavor) to be used
+    default: itops.large
+  public_net:
+    type: string
+    description: public network id
+  tenant_net:
+    type: string
+    description: tenant network id
+  tenant_subnet:
+    type: string
+    description: tenant subnet id
+
+resources:
+
+  securitygroup:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: puppetserver-securitygroup
+      description: puppetserver security group
+      rules:
+      - remote_ip_prefix: 0.0.0.0/0
+        protocol: tcp
+        port_range_min: 22
+        port_range_max: 22
+      - remote_ip_prefix: 0.0.0.0/0
+        protocol: tcp
+        port_range_min: 80
+        port_range_max: 80
+      - remote_ip_prefix: 0.0.0.0/0
+        protocol: tcp
+        port_range_min: 443
+        port_range_max: 443
+
+  puppetserver_port:
+        type: OS::Neutron::Port
+        properties:
+          network_id: { get_param: tenant_net }
+          security_groups: [ {Ref: securitygroup} ]
+          fixed_ips:
+            - subnet_id: { get_param: tenant_subnet }
+
+  puppetserver_floating_ip:
+        type: OS::Neutron::FloatingIP
+        properties:
+          floating_network_id: { get_param: public_net }
+          port_id: { get_resource: puppetserver_port }
+
+  puppetserver:
+        type: OS::Nova::Server
+        properties:
+          name: puppetserver
+          key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: instance_type }
+          admin_user: centos
+          networks:
+            - port: { get_resource: puppetserver_port }
+          user_data: |
+                #!/bin/bash
+                echo "127.0.0.1  puppetserver  puppetserver" >> /etc/hosts
+                rpm -Uvh https://yum.puppetlabs.com/puppetlabs-release-pc1-el-7.noarch.rpm
+                yum install -y puppetserver
+                systemctl enable puppetserver
+                systemctl start puppetserver
+                
+outputs:
+  puppetserver_private_ip:
+    description: Private IP address of puppetserver
+    value: { get_attr: [ puppetserver, first_address ] }
+  puppetserver_public_ip:
+    description: Floating IP address of puppetserver
+    value: { get_attr: [ puppetserver_floating_ip, floating_ip_address ] }
